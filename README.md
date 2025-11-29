@@ -1,268 +1,138 @@
 # RoboRacer - ROS2 Robotic Car Control System
 
+A ROS2-based control system for robotic cars with joystick input, custom PCB hardware, and real-time motor control.
 
+## System Overview
 
-A complete ROS2-based control system for robotic cars with joystick input, custom PCB hardware, and real-time motor control. Features modular architecture for easy extension with autonomous capabilities.
+The system uses three main components:
+- **Joystick Node** running on the host PC reads controller input
+- **Motor Control Node** translates commands and handles serial communication
+- **Arduino Nano** drives the motors directly
 
----
+Commands flow from the joystick through ROS2 topics, get converted to UART packets, and are executed by the Arduino firmware.
 
-## System Architecture
+## Architecture
 
 ```
-┌─────────────┐        ROS2 Topics         ┌──────────────┐
-│  Joystick   │ ───────────────────────────>│ Motor Control│
-│    Node     │    /cmd_vel, /robot_control │     Node     │
-│ (Host PC)   │                             │  (Host PC)   │
-└─────────────┘                             └──────┬───────┘
-                                                   │
-                                            UART Serial
-                                                   │
-                                            ┌──────▼───────┐
-                                            │   Arduino    │
-                                            │     Nano     │
-                                            │  (Firmware)  │
-                                            └──────┬───────┘
-                                                   │
-                              ┌────────────────────┴────────────────────┐
-                              │                                         │
-                        ┌─────▼──────┐                          ┌──────▼──────┐
-                        │ BLDC Motor │                          │ Servo Motor │
-                        │ (Propulsion)│                          │  (Steering) │
-                        └────────────┘                          └─────────────┘
+Joystick → ROS2 Topics → Motor Control → UART → Arduino → Motors
 ```
 
----
+The joystick node publishes to `/cmd_vel` and `/robot_control` topics. The motor control node subscribes to these, formats the data into UART packets, and sends them to the Arduino over serial. The Arduino parses incoming packets and generates PWM signals for the BLDC motor and servo.
 
 ## Components
 
-### 1. Joystick Node (ROS2 - Host PC)
+### Joystick Node
+Reads USB/Bluetooth joystick input and maps axes to speed/steering commands. Has dead-zone filtering and configurable button mapping.
 
-**Responsibility:** Human interface and command generation
+### Motor Control Node
+Handles the bridge between ROS2 and the Arduino. Subscribes to command topics, validates input, and manages serial communication at 115200 baud.
 
-- Continuously reads USB/Bluetooth joystick input
-- Maps raw axes and buttons to robot commands:
-  - Axes → Speed and steering angle
-  - Buttons → Emergency stop, mode switching
-- Publishes to ROS2 topics: `/cmd_vel`, `/robot_control`
-- Runs on host computer with ROS2 environment
-
-**Key Features:**
-- Dead-zone filtering for joystick drift
-- Configurable axis mapping
-- Real-time input processing
-
----
-
-### 2. Motor Control Node (ROS2 - Host PC)
-
-**Responsibility:** Protocol translation and communication bridge
-
-- Subscribes to command topics from joystick node
-- Translates ROS2 messages → UART data packets
-- Manages serial communication with Arduino Nano
-- Implements safety features:
-  - Command rate limiting
-  - Timeout detection
-  - Input validation
-
-**Data Packet Format:**
+Data packets look like:
 ```
-[START_BYTE] [SPEED] [DIRECTION] [STEERING] [FLAGS] [CHECKSUM] [END_BYTE]
+[START] [SPEED] [DIRECTION] [STEERING] [FLAGS] [CHECKSUM] [END]
 ```
 
----
+### Arduino Firmware
+Receives UART commands and controls the hardware. Implements a watchdog timer that stops the motors if communication is lost for more than 500ms.
 
-### 3. Arduino Nano Firmware
+## Hardware
 
-**Responsibility:** Low-level hardware control and execution
-
-- Receives UART commands from motor control node
-- Parses data packets and validates checksums
-- Generates hardware control signals:
-  - **BLDC Motor:** Speed and direction control
-  - **Servo Motor:** PWM signal for steering angle
-- Safety mechanisms:
-  - Watchdog timer (auto-stop on communication loss)
-  - Emergency stop handling
-  - Safe startup sequence
-
----
-
-## Data Flow Pipeline
-
-```
-User Input → Joystick Node → ROS2 Topics → Motor Control Node → UART → Firmware → Motors
-```
-
-**Step-by-step execution:**
-
-1. **User moves joystick** → Analog input detected
-2. **Joystick node processes** → Publishes ROS2 message
-3. **Motor control node receives** → Formats UART packet
-4. **Firmware parses command** → Generates control signals
-5. **Motors respond** → Robot moves in real-time
-
-**Typical latency:** <50ms from joystick to motor response
-
----
-
-## Hardware Integration
-
-### Custom PCB Design (KiCad)
-
-**Features:**
-- Arduino Nano socket with pin headers
-- Power regulation circuitry (5V/3.3V rails)
-- Screw terminals for motor connections:
-  - BLDC motor power and control
-  - Servo motor signal and power
-- Status LEDs for diagnostics
-- UART header for programming/debugging
+Custom 2-layer PCB designed in KiCad with:
+- Arduino Nano socket
+- Power regulation (5V/3.3V)
+- Screw terminals for motors
+- Status LEDs
 - Reverse polarity protection
 
-**PCB Layers:**
-- 2-layer design
-- Silkscreen labels for all connectors
-- Ground plane for noise reduction
+The board connects a BLDC motor for propulsion and a standard servo for steering.
 
----
+## Getting Started
 
-## Project Structure
-
-```
-roboracer/
-├── ros2_ws/
-│   ├── joystick_node/           # Joystick input handler
-│   │   ├── joystick_reader.py
-│   │   └── config/mapping.yaml
-│   └── motor_control_node/      # UART communication bridge
-│       ├── motor_controller.py
-│       └── protocol.py
-├── firmware/
-│   ├── main.ino                 # Arduino Nano firmware
-│   ├── motor_driver.cpp
-│   └── servo_control.cpp
-├── hardware/
-│   ├── pcb/                     # KiCad project files
-│   │   ├── roboracer.kicad_pro
-│   │   ├── roboracer.kicad_sch
-│   │   └── roboracer.kicad_pcb
-│   └── bom.csv                  # Bill of materials
-└── README.md
-```
-
----
-
-## Quick Start
-
-### 1. Hardware Setup
+Flash the Arduino:
 ```bash
-# Flash Arduino firmware
 cd firmware/
 arduino-cli compile --fqbn arduino:avr:nano main.ino
 arduino-cli upload -p /dev/ttyUSB0 --fqbn arduino:avr:nano main.ino
 ```
 
-### 2. ROS2 Workspace Build
+Build the ROS2 workspace:
 ```bash
 cd ros2_ws/
 colcon build
 source install/setup.bash
 ```
 
-### 3. Launch System
+Run the system:
 ```bash
-# Terminal 1: Start joystick node
+# Terminal 1
 ros2 run joystick_node joystick_reader
 
-# Terminal 2: Start motor control node
+# Terminal 2
 ros2 run motor_control_node motor_controller --port /dev/ttyUSB0
 ```
 
-### 4. Control the Robot
-- Connect joystick via USB/Bluetooth
-- Left stick: Forward/backward speed
-- Right stick: Steering angle
-- Button A: Emergency stop
+Controls:
+- Left stick: speed
+- Right stick: steering
+- Button A: emergency stop
 
----
+## Project Structure
+
+```
+roboracer/
+├── ros2_ws/
+│   ├── joystick_node/
+│   │   ├── joystick_reader.py
+│   │   └── config/mapping.yaml
+│   └── motor_control_node/
+│       ├── motor_controller.py
+│       └── protocol.py
+├── firmware/
+│   ├── main.ino
+│   ├── motor_driver.cpp
+│   └── servo_control.cpp
+├── hardware/
+│   ├── pcb/
+│   │   ├── roboracer.kicad_pro
+│   │   ├── roboracer.kicad_sch
+│   │   └── roboracer.kicad_pcb
+│   └── bom.csv
+└── README.md
+```
 
 ## Safety Features
 
-| Feature | Implementation | Purpose |
-|---------|----------------|---------|
-| Watchdog Timer | Firmware-level timeout | Auto-stop on communication loss |
-| Command Validation | Node-level checks | Prevent invalid motor commands |
-| Emergency Stop | Button + software flag | Immediate motor cutoff |
-| Rate Limiting | 50Hz max command rate | Prevent command flooding |
-| Timeout Detection | 500ms no-command threshold | Safe state on connection loss |
+The system has several safety mechanisms:
+- Watchdog timer in firmware stops motors if no commands received for 500ms
+- Command validation in the motor control node
+- Emergency stop button
+- Rate limiting at 50Hz to prevent command flooding
 
----
+## Adding New Features
 
-## Extending the System
+The ROS2 architecture makes it easy to add new capabilities. Want to add a camera? Just run a camera node that publishes to `/camera/image`. Want autonomous navigation? Run a nav2 node that publishes to `/cmd_vel`. The existing nodes don't need any changes.
 
-The modular architecture allows easy addition of new capabilities:
-
-### Add Camera Stream
+Examples:
 ```bash
 ros2 run camera_node stream_publisher
-# Automatically available to all nodes via /camera/image topic
-```
-
-### Add Autonomous Navigation
-```bash
 ros2 run nav2_node autonomous_driver
-# Publishes to same /cmd_vel topic, seamless integration
-```
-
-### Add Telemetry Visualization
-```bash
 ros2 run rviz2 rviz2 -d config/roboracer.rviz
-# Subscribe to all topics for real-time monitoring
 ```
 
-**No modifications needed to existing nodes** - ROS2 publish-subscribe pattern enables loose coupling.
+## Specs
 
----
-
-## Technical Specifications
-
-| Component | Specification |
-|-----------|---------------|
-| Microcontroller | Arduino Nano (ATmega328P) |
-| Communication | UART @ 115200 baud |
-| Motor Driver | BLDC ESC compatible |
-| Servo | Standard 50Hz PWM servo |
-| Power Supply | 7.4V LiPo (2S) |
-| ROS2 Version | Humble Hawksbill |
-| Control Frequency | 50Hz command loop |
-
----
-
-## Performance Metrics
-
-- **Latency:** <50ms joystick-to-motor
-- **Command Rate:** 50 Hz sustained
-- **Range:** Limited by UART cable (wireless upgrade possible)
-- **Battery Life:** ~30 minutes continuous operation
-
----
+- Microcontroller: Arduino Nano (ATmega328P)
+- Communication: UART @ 115200 baud
+- Power: 7.4V LiPo (2S)
+- ROS2: Humble Hawksbill
+- Control loop: 50Hz
+- Latency: <50ms from joystick to motors
+- Battery life: ~30 minutes
 
 ## Author
 
-**Nina Dragićević**  
-
-
----
+Nina Dragićević
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
-
----
-
-## Acknowledgments
-
-- ROS2 community for excellent documentation
-- KiCad developers for PCB design tools
-- Arduino platform for accessible embedded development
+MIT License - see LICENSE file for details.
